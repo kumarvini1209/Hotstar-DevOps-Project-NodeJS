@@ -1,0 +1,83 @@
+name: Build and deploy Hotstar
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: demo
+  EKS_CLUSTER_NAME: EKS_CLOUD
+  KUBERNETES_NAMESPACE: default
+  DEPLOYMENT_NAME: hotstar-deployment
+  CONTAINER_NAME: hotstar
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies and build application
+        run: |
+          npm ci
+          npm run build
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Ensure ECR repository exists
+        run: |
+          aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" >/dev/null 2>&1 || \
+            aws ecr create-repository --repository-name "$ECR_REPOSITORY"
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build --tag "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
+          docker push "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Initialize Terraform
+        working-directory: EKS_TERRAFORM
+        run: terraform init
+
+      - name: Validate Terraform
+        working-directory: EKS_TERRAFORM
+        run: terraform validate
+
+      - name: Apply Terraform infrastructure
+        working-directory: EKS_TERRAFORM
+        run: terraform apply -auto-approve
+
+      - name: Configure kubectl for EKS
+        run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
+
+      - name: Deploy Kubernetes manifests
+        run: |
+          kubectl apply --namespace "$KUBERNETES_NAMESPACE" -f K8S/
+          kubectl -n "$KUBERNETES_NAMESPACE" set image deployment/"$DEPLOYMENT_NAME" \
+            "$CONTAINER_NAME"="${{ steps.ecr.outputs.registry }}/$ECR_REPOSITORY:${{ github.sha }}"
+          kubectl -n "$KUBERNETES_NAMESPACE" rollout status deployment/"$DEPLOYMENT_NAME" --timeout=180s
