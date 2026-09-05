@@ -6,14 +6,15 @@ const [allMovies,setAllMovies]=useState([])
 console.log(fetchUrl);
 const base_url="https://image.tmdb.org/t/p/original/"
 
-const fetchData=async()=>{
-   const {data}= await tmdbAxiosInstance.get(fetchUrl)
-   setAllMovies(data.results)
-}
 console.log(allMovies);
 useEffect(()=>{
-    fetchData()
-},[])
+        const fetchData = async () => {
+            const {data} = await tmdbAxiosInstance.get(fetchUrl)
+            setAllMovies(data.results)
+        }
+
+        fetchData()
+},[fetchUrl])
 
   return (
     <div className='row'>
@@ -23,7 +24,7 @@ useEffect(()=>{
             {
 
                 allMovies.map((item,index)=>(
-                    <>
+                    <React.Fragment key={item.id || index}>
                     
                     
                     <div className='ba'>
@@ -52,7 +53,7 @@ useEffect(()=>{
                                 </div>
                                 </div>
                         </div>
-                    </>
+                    </React.Fragment>
                 ))
             }
            
